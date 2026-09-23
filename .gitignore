@@ -1,0 +1,28 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Build output
+bin/
+obj/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Local configuration
+appsettings.Development.json
+appsettings.Local.json
+
+# Test results
+TestResults/
+coverage/
+
+# IDE files
+.vscode/
+.idea/
+
+# Git
+.git/

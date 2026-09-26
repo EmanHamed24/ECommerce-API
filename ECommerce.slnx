@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/Solution Items/">
+    <File Path=".dockerignore" />
+    <File Path=".gitignore" />
+    <File Path="README.md" />
+  </Folder>
   <Project Path="ECommerce.API/ECommerce.API.csproj" />
   <Project Path="ECommerce.Application/ECommerce.Application.csproj" />
   <Project Path="ECommerce.Domain/ECommerce.Domain.csproj" />

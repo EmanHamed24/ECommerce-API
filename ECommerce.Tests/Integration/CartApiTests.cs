@@ -66,7 +66,68 @@ public class CartApiTests
     [Fact]
     public async Task AddToCart_ShouldReturnOk_WhenCustomerAddsValidProduct()
     {
-        var factory = _factory.WithWebHostBuilder(builder =>
+        // Create an Admin client to create a valid product for this test
+        var adminFactory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = "AdminTest";
+                    options.DefaultChallengeScheme = "AdminTest";
+                })
+                .AddScheme<
+                    Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions,
+                    AdminTestAuthHandler>(
+                    "AdminTest",
+                    options => { });
+            });
+        });
+
+        var adminClient = adminFactory.CreateClient();
+
+        adminClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "AdminTest");
+
+        var productRequest = new
+        {
+            name = "Cart Integration Test Product",
+            description = "Product created for cart integration test",
+            price = 100,
+            stockQuantity = 10,
+            sku = $"CART-TEST-{Guid.NewGuid():N}",
+            categoryId = 1
+        };
+
+        var createProductResponse = await adminClient.PostAsJsonAsync(
+            "/api/Products",
+            productRequest);
+
+        var createProductBody =
+            await createProductResponse.Content.ReadAsStringAsync();
+
+        Assert.True(
+            createProductResponse.IsSuccessStatusCode,
+            $"Product creation failed. Status: {createProductResponse.StatusCode}, Body: {createProductBody}");
+
+        var createdProduct =
+            await createProductResponse.Content
+                .ReadFromJsonAsync<
+                    ECommerce.Application.DTOs.Products.ProductResponse>();
+
+        Assert.NotNull(createdProduct);
+
+        Assert.True(
+            createdProduct.StockQuantity > 0,
+            $"Created product has invalid stock quantity: {createdProduct.StockQuantity}");
+
+        Assert.Equal(
+            productRequest.sku,
+            createdProduct.SKU);
+
+        // Create a Customer client to add the product to the cart
+        var customerFactory = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
             {
@@ -83,66 +144,24 @@ public class CartApiTests
             });
         });
 
-        var client = factory.CreateClient();
+        var customerClient = customerFactory.CreateClient();
 
-        client.DefaultRequestHeaders.Authorization =
+        customerClient.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue(
                 "Test");
 
-        var productsResponse = await client.GetAsync(
-            "/api/Products");
-
-        var productsBody = await productsResponse.Content
-            .ReadAsStringAsync();
-
-        Assert.True(
-            productsResponse.IsSuccessStatusCode,
-            $"Products GET failed. Status: {productsResponse.StatusCode}, Body: {productsBody}");
-
-        var products = System.Text.Json.JsonSerializer
-              .Deserialize<List<ECommerce.Application.DTOs.Products.ProductResponse>>(
-              productsBody,
-        new System.Text.Json.JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
-
-        var testProduct = products?
-            .FirstOrDefault(p => p.SKU == TestConstants.ProductSku);
-
-        if (testProduct == null)
-        {
-            throw new Exception(
-                $"TestConstants.ProductSku was not found. Products response: {productsBody}");
-        }
-
         var request = new
         {
-            productId = testProduct.Id,
+            productId = createdProduct.Id,
             quantity = 1
         };
 
-        var productResponse = await client.GetAsync(
-            $"/api/Products/{testProduct.Id}");
-
-        var productBody = await productResponse.Content
-            .ReadAsStringAsync();
-
-        Assert.True(
-            productResponse.IsSuccessStatusCode,
-            $"Product GET failed. Status: {productResponse.StatusCode}, Body: {productBody}");
-
-        Assert.True(
-            productBody.Contains("active", StringComparison.OrdinalIgnoreCase),
-            $"TEST PRODUCT DATA: {productBody}");
-        Console.WriteLine(
-            $"Test product response: {productResponse.StatusCode}, Body: {productBody}");
-
-        var response = await client.PostAsJsonAsync(
+        var response = await customerClient.PostAsJsonAsync(
             "/api/Cart/items",
             request);
 
-        var responseBody = await response.Content.ReadAsStringAsync();
+        var responseBody =
+            await response.Content.ReadAsStringAsync();
 
         Assert.True(
             response.IsSuccessStatusCode,

@@ -106,7 +106,64 @@ public class PaymentsApiTests
     [Fact]
     public async Task ProcessPayment_ShouldReturnBadRequest_WhenOrderIsAlreadyPaid()
     {
-        var factory = _factory.WithWebHostBuilder(builder =>
+        // Create an Admin client to create a valid product for this test
+        var adminFactory = _factory.WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddAuthentication(options =>
+                {
+                    options.DefaultAuthenticateScheme = "AdminTest";
+                    options.DefaultChallengeScheme = "AdminTest";
+                })
+                .AddScheme<
+                    Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions,
+                    AdminTestAuthHandler>(
+                    "AdminTest",
+                    options => { });
+            });
+        });
+
+        var adminClient = adminFactory.CreateClient();
+
+        adminClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "AdminTest");
+
+        var productRequest = new
+        {
+            name = "Payment Integration Test Product",
+            description = "Product created for payment integration test",
+            price = 100,
+            stockQuantity = 10,
+            sku = $"PAYMENT-TEST-{Guid.NewGuid():N}",
+            categoryId = 1
+        };
+
+        var createProductResponse = await adminClient.PostAsJsonAsync(
+            "/api/Products",
+            productRequest);
+
+        var createProductBody =
+            await createProductResponse.Content.ReadAsStringAsync();
+
+        Assert.True(
+            createProductResponse.IsSuccessStatusCode,
+            $"Product creation failed. Status: {createProductResponse.StatusCode}, Body: {createProductBody}");
+
+        var createdProduct =
+            await createProductResponse.Content
+                .ReadFromJsonAsync<
+                    ECommerce.Application.DTOs.Products.ProductResponse>();
+
+        Assert.NotNull(createdProduct);
+
+        Assert.True(
+            createdProduct.StockQuantity > 0,
+            $"Created product has invalid stock quantity: {createdProduct.StockQuantity}");
+
+        // Create a Customer client
+        var customerFactory = _factory.WithWebHostBuilder(builder =>
         {
             builder.ConfigureTestServices(services =>
             {
@@ -123,56 +180,49 @@ public class PaymentsApiTests
             });
         });
 
-        var client = factory.CreateClient();
+        var client = customerFactory.CreateClient();
 
         client.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue(
                 "Test");
 
-        var productsResponse = await client.GetAsync(
-    "/api/Products");
-
-        Assert.Equal(
-            HttpStatusCode.OK,
-            productsResponse.StatusCode);
-
-        var products = await productsResponse.Content
-            .ReadFromJsonAsync<
-                List<ECommerce.Application.DTOs.Products.ProductResponse>>();
-
-        var testProduct = products?
-            .FirstOrDefault(p =>
-                p.SKU == TestConstants.ProductSku);
-
-        Assert.NotNull(testProduct);
-
+        // Add the product to the customer's cart
         var cartResponse = await client.PostAsJsonAsync(
             "/api/Cart/items",
             new
             {
-                productId = testProduct!.Id,
+                productId = createdProduct.Id,
                 quantity = 1
             });
 
-        Assert.Equal(
-            HttpStatusCode.OK,
-            cartResponse.StatusCode);
+        var cartBody =
+            await cartResponse.Content.ReadAsStringAsync();
 
+        Assert.True(
+            cartResponse.IsSuccessStatusCode,
+            $"Add to cart failed. Status: {cartResponse.StatusCode}, Body: {cartBody}");
+
+        // Create the order
         var orderResponse = await client.PostAsJsonAsync(
             "/api/Orders",
             new { });
 
-        Assert.Equal(
-            HttpStatusCode.OK,
-            orderResponse.StatusCode);
+        var orderBody =
+            await orderResponse.Content.ReadAsStringAsync();
 
-        var order = await orderResponse.Content
-            .ReadFromJsonAsync<System.Text.Json.JsonElement>();
+        Assert.True(
+            orderResponse.IsSuccessStatusCode,
+            $"Create order failed. Status: {orderResponse.StatusCode}, Body: {orderBody}");
+
+        var order =
+            await orderResponse.Content
+                .ReadFromJsonAsync<System.Text.Json.JsonElement>();
 
         var orderId = order
             .GetProperty("id")
             .GetInt32();
 
+        // First payment should succeed
         var firstPaymentResponse = await client.PostAsJsonAsync(
             "/api/Payments",
             new
@@ -180,16 +230,23 @@ public class PaymentsApiTests
                 orderId = orderId
             });
 
-        Assert.Equal(
-            HttpStatusCode.OK,
-            firstPaymentResponse.StatusCode);
+        var firstPaymentBody =
+            await firstPaymentResponse.Content.ReadAsStringAsync();
 
+        Assert.True(
+            firstPaymentResponse.IsSuccessStatusCode,
+            $"First payment failed. Status: {firstPaymentResponse.StatusCode}, Body: {firstPaymentBody}");
+
+        // Second payment should be rejected because the order is already paid
         var secondPaymentResponse = await client.PostAsJsonAsync(
             "/api/Payments",
             new
             {
                 orderId = orderId
             });
+
+        var secondPaymentBody =
+            await secondPaymentResponse.Content.ReadAsStringAsync();
 
         Assert.Equal(
             HttpStatusCode.BadRequest,
